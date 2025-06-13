@@ -61,13 +61,24 @@ const AuthProvider = ({ children }) => {
 const api = {
   async request(endpoint, options = {}) {
     const token = localStorage.getItem("token");
-    const config = {
-      headers: {
+    let headers = options.headers || {};
+
+    // If the body is FormData, don't set Content-Type (browser will do it)
+    const isFormData = options.body instanceof FormData;
+    if (!isFormData) {
+      headers = {
         "Content-Type": "application/json",
-        ...(token && { Authorization: `Bearer ${token}` }),
-        ...options.headers,
-      },
+        ...headers,
+      };
+    }
+
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const config = {
       ...options,
+      headers,
     };
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
@@ -409,50 +420,67 @@ const Header = ({ activeTab, setActiveTab }) => {
 };
 
 const JobCard = ({ job, onApply, showActions, onEdit, onDelete, onView }) => {
+  const { title, description, salary, status, jobLocation } = job;
+
+  // Format salary with commas
+  const formattedSalary = salary?.toLocaleString() + " تومان";
+
+  // Compose location string
+  const location = jobLocation ? `${jobLocation.city}، ${jobLocation.street}، ${jobLocation.alley}` : "مکان نامشخص";
+
+  // Status badge color
+  const statusColor =
+    status === "ACTIVE"
+      ? "bg-green-100 text-green-800"
+      : status === "PENDING"
+        ? "bg-yellow-100 text-yellow-800"
+        : "bg-gray-100 text-gray-800";
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
-      <div className="flex justify-between items-start mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">{job.title}</h3>
-        <span
-          className={`px-2 py-1 text-xs rounded-full ${
-            job.status === "ACTIVE"
-              ? "bg-green-100 text-green-800"
-              : job.status === "PENDING"
-                ? "bg-yellow-100 text-yellow-800"
-                : "bg-gray-100 text-gray-800"
-          }`}
-        >
-          {job.status}
+    <div
+      className="bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-shadow flex flex-col gap-3"
+      style={{ border: "1px solid #e0e0e0" }}
+    >
+      <div className="flex justify-between items-center mb-2">
+        <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+        <span className={`px-3 py-1 text-xs rounded-full font-semibold ${statusColor}`}>
+          {status === "ACTIVE" ? "فعال" : status === "PENDING" ? "در انتظار" : "غیرفعال"}
         </span>
       </div>
-      <p className="text-gray-600 mb-4 line-clamp-3">{job.description}</p>
-      <div className="flex justify-between items-center">
-        <span className="text-sm text-gray-500">Posted: {new Date(job.createdAt).toLocaleDateString()}</span>
-        <div className="flex space-x-2">
-          {onView && (
-            <button onClick={() => onView(job)} className="text-blue-600 hover:text-blue-700">
-              <Eye className="w-4 h-4" />
+      <div className="text-gray-700 text-base mb-2">{description}</div>
+      <div className="flex justify-between items-center mt-2">
+        <span className="font-medium text-blue-700 text-base">حقوق: {formattedSalary}</span>
+        <span className="text-gray-500 text-sm flex items-center gap-1">
+          <span role="img" aria-label="location">
+            📍
+          </span>
+          {location}
+        </span>
+      </div>
+      <div className="flex justify-end items-center gap-2 mt-2">
+        {onView && (
+          <button onClick={() => onView(job)} className="text-blue-600 hover:text-blue-700">
+            <Eye className="w-4 h-4" />
+          </button>
+        )}
+        {showActions && (
+          <>
+            <button onClick={() => onEdit(job)} className="text-blue-600 hover:text-blue-700">
+              <Edit className="w-4 h-4" />
             </button>
-          )}
-          {showActions && (
-            <>
-              <button onClick={() => onEdit(job)} className="text-blue-600 hover:text-blue-700">
-                <Edit className="w-4 h-4" />
-              </button>
-              <button onClick={() => onDelete(job.id)} className="text-red-600 hover:text-red-700">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </>
-          )}
-          {onApply && (
-            <button
-              onClick={() => onApply(job)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm"
-            >
-              Apply
+            <button onClick={() => onDelete(job.id)} className="text-red-600 hover:text-red-700">
+              <Trash2 className="w-4 h-4" />
             </button>
-          )}
-        </div>
+          </>
+        )}
+        {onApply && (
+          <button
+            onClick={() => onApply(job)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm"
+          >
+            Apply
+          </button>
+        )}
       </div>
     </div>
   );
@@ -464,6 +492,7 @@ const JobsTab = () => {
   const [selectedJob, setSelectedJob] = useState(null);
   const [showApplicationModal, setShowApplicationModal] = useState(false);
   const [applicationText, setApplicationText] = useState("");
+  const [resumeFile, setResumeFile] = useState(null);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -473,7 +502,7 @@ const JobsTab = () => {
   const loadJobs = async () => {
     try {
       const data = await api.jobs.getAll();
-      setJobs(data);
+      setJobs(data.data);
     } catch (error) {
       console.error("Failed to load jobs:", error);
     } finally {
@@ -483,12 +512,25 @@ const JobsTab = () => {
 
   const handleApply = async () => {
     try {
-      await api.applications.create(selectedJob.id, { description: applicationText });
+      const formData = new FormData();
+      formData.append("description", applicationText);
+      if (resumeFile) {
+        formData.append("resume", resumeFile);
+      }
+      await api.request(`/applications/jobs/${selectedJob.id}`, {
+        method: "POST",
+        body: formData,
+      });
       setShowApplicationModal(false);
       setApplicationText("");
+      setResumeFile(null);
       alert("Application submitted successfully!");
     } catch (error) {
-      alert("Failed to submit application");
+      if (error.message && error.message.includes("409")) {
+        alert("You have already applied to this job.");
+      } else {
+        alert("Failed to submit application");
+      }
     }
   };
 
@@ -529,6 +571,17 @@ const JobsTab = () => {
               value={applicationText}
               onChange={(e) => setApplicationText(e.target.value)}
             />
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Upload Resume (PDF, JPG, JPEG, PNG):
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={(e) => setResumeFile(e.target.files[0])}
+                className="block w-full text-sm text-gray-700"
+              />
+            </div>
             <div className="flex justify-end space-x-4 mt-4">
               <button
                 onClick={() => setShowApplicationModal(false)}
@@ -563,7 +616,7 @@ const MyJobsTab = () => {
   const loadJobs = async () => {
     try {
       const data = await api.jobs.getUserJobs();
-      setJobs(data);
+      setJobs(data.data);
     } catch (error) {
       console.error("Failed to load jobs:", error);
     } finally {
@@ -574,7 +627,7 @@ const MyJobsTab = () => {
   const loadJobApplications = async (jobId) => {
     try {
       const data = await api.applications.getForJob(jobId);
-      setApplications(data);
+      setApplications(data.data);
       setSelectedJobApplications(jobId);
     } catch (error) {
       console.error("Failed to load applications:", error);
@@ -771,7 +824,7 @@ const ApplicationsTab = () => {
   const loadApplications = async () => {
     try {
       const data = await api.applications.getUserApplications();
-      setApplications(data);
+      setApplications(data.data || []);
     } catch (error) {
       console.error("Failed to load applications:", error);
     } finally {
@@ -792,8 +845,7 @@ const ApplicationsTab = () => {
           <div key={app.id} className="bg-white rounded-lg shadow-md p-6">
             <div className="flex justify-between items-start mb-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">{app.jobTitle}</h3>
-                <p className="text-sm text-gray-600">Applied on: {new Date(app.createdAt).toLocaleDateString()}</p>
+                <h3 className="text-lg font-semibold text-gray-900">{app.job?.title || "Unknown Job"}</h3>
               </div>
               <span
                 className={`px-3 py-1 text-sm rounded-full ${
@@ -808,6 +860,7 @@ const ApplicationsTab = () => {
               </span>
             </div>
             <p className="text-gray-700">{app.description}</p>
+            {app.originalFileName && <div className="mt-2 text-sm text-gray-500">Resume: {app.originalFileName}</div>}
           </div>
         ))}
         {applications.length === 0 && (
@@ -836,7 +889,7 @@ const AdminTab = () => {
   const loadAdminJobs = async () => {
     try {
       const data = await api.jobs.getAllAdmin(statusFilter);
-      setJobs(data);
+      setJobs(data.data);
     } catch (error) {
       console.error("Failed to load admin jobs:", error);
     } finally {
