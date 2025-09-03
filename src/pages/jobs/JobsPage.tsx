@@ -14,7 +14,7 @@ export const JobsPage: React.FC = () => {
   const { user } = useAuth();
   const { success, error: showError } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<JobStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<JobStatus | "">("ACTIVE");
   const [showApplicationModal, setShowApplicationModal] = useState(false);
   const [showJobDetailModal, setShowJobDetailModal] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -24,6 +24,8 @@ export const JobsPage: React.FC = () => {
     () => ({
       search: searchTerm || undefined,
       status: statusFilter || undefined,
+      page: 1,
+      limit: 1000, // Large limit to ensure we see all jobs
     }),
     [searchTerm, statusFilter],
   );
